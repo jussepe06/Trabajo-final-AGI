@@ -309,12 +309,112 @@ function PcaScatterChart({ clustering, darkMode }) {
   return html`<div className="h-72"><canvas ref=${canvasRef}></canvas></div>`;
 }
 
+
+/** Panel Bloque 1 — comparación verificable de estrategias con la misma muestra de test. */
+function BlockOnePanel({ agentData, predictionData, error }) {
+  const rows = agentData?.agents || [];
+  const agentKeys = [
+    ["modo_base", "Regla estática"],
+    ["agente_modelo", "Basado en modelo"],
+    ["agente_utilidad", "Basado en utilidad"],
+  ];
+  const percent = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
+  const time = (value) => `${Number(value || 0).toFixed(3)} ms`;
+
+  return html`
+    <section className="bg-white dark:bg-[#0c0c0f] border border-zinc-200 dark:border-zinc-800/90 rounded-xl p-5 sm:p-6 shadow-sm space-y-5">
+      <div className="border-b border-zinc-200 dark:border-zinc-800 pb-4">
+        <span className="text-xs font-semibold uppercase tracking-wider text-cyan-600 dark:text-cyan-400">
+          Bloque 1 · Arquitecturas de agentes inteligentes
+        </span>
+        <h2 className="text-xl font-bold tracking-tight mt-1">¿Qué agente toma mejores decisiones?</h2>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+          Comparación de la regla estática, el agente basado en modelo y el agente basado en utilidad.
+          Las tres estrategias se evalúan sobre el mismo conjunto de transacciones sintéticas.
+        </p>
+      </div>
+
+      ${rows.length ? html`
+        <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <table className="w-full text-xs text-left border-collapse">
+            <thead className="bg-zinc-100 dark:bg-zinc-900 text-zinc-600 dark:text-zinc-300">
+              <tr>
+                ${["Estrategia", "Accuracy", "Recall", "F1", "FP", "FN", "Beneficio neto", "Predicción"].map((header) => html`
+                  <th key=${header} className="px-3 py-3 whitespace-nowrap font-semibold">${header}</th>
+                `)}
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((agent) => html`
+                <tr key=${agent.agent_key} className="border-t border-zinc-200 dark:border-zinc-800">
+                  <td className="px-3 py-3 font-semibold">${agent.agent_name}</td>
+                  <td className="px-3 py-3 font-mono">${percent(agent.metrics.accuracy)}</td>
+                  <td className="px-3 py-3 font-mono">${percent(agent.metrics.recall)}</td>
+                  <td className="px-3 py-3 font-mono text-blue-600 dark:text-blue-400 font-bold">${percent(agent.metrics.f1_score)}</td>
+                  <td className="px-3 py-3 font-mono">${agent.confusion_matrix.fp}</td>
+                  <td className="px-3 py-3 font-mono">${agent.confusion_matrix.fn}</td>
+                  <td className="px-3 py-3 font-mono text-emerald-600 dark:text-emerald-400">${PEN.format(agent.financial_simulation.beneficio_neto_pen)}</td>
+                  <td className="px-3 py-3 font-mono">${time(agent.prediction_time_ms)}</td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">
+          Muestra: ${agentData.test_rows} operaciones de prueba (${agentData.test_fraud_count} fraudes).
+          Tiempos medidos por llamada, no promedios de varias corridas. Costo FP = S/ 25 (supuesto académico).
+          El agente de utilidad utiliza un puntaje heurístico no calibrado como probabilidad.
+        </p>
+      ` : html`
+        <div className="p-4 rounded-lg border border-amber-500/20 bg-amber-500/5 text-sm text-amber-700 dark:text-amber-300">
+          ${error || "No hay métricas del Bloque 1 disponibles todavía."}
+          Para activarlas, integra primero los PR de agents.py, ml_engine.py y main.py en main.
+        </div>
+      `}
+
+      <div>
+        <h3 className="text-sm font-semibold mb-2">Decisiones para la transacción del simulador</h3>
+        ${predictionData ? html`
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            ${agentKeys.map(([key, label]) => {
+              const decision = predictionData[key];
+              if (!decision) return null;
+              const blocked = decision.decision === "BLOQUEAR";
+              return html`
+                <div key=${key} className=${`rounded-lg border p-4 ${blocked
+                  ? "border-rose-500/30 bg-rose-500/5"
+                  : "border-emerald-500/30 bg-emerald-500/5"}`}>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">${label}</p>
+                  <p className=${`text-base font-bold mt-1 ${blocked ? "text-rose-500" : "text-emerald-500"}`}>
+                    ${decision.decision}
+                  </p>
+                  ${typeof decision.alert_count === "number" ? html`
+                    <p className="text-xs text-zinc-500 mt-1">Alertas del estado: ${decision.alert_count}</p>
+                  ` : null}
+                  ${typeof decision.heuristic_risk_score === "number" ? html`
+                    <p className="text-xs text-zinc-500 mt-1">Puntaje heurístico: ${decision.heuristic_risk_score.toFixed(3)}</p>
+                  ` : null}
+                </div>
+              `;
+            })}
+          </div>
+        ` : html`
+          <p className="text-xs text-zinc-500">Selecciona un perfil en el simulador o ejecuta una predicción para ver los tres veredictos.</p>
+        `}
+      </div>
+    </section>
+  `;
+}
+
 function App() {
   const [darkMode, setDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState("all");
   const [threshold, setThreshold] = useState(0.5);
   const [metricsData, setMetricsData] = useState(null);
   const [clusteringData, setClusteringData] = useState(null);
+  const [agentsData, setAgentsData] = useState(null);
+  const [agentPredictionData, setAgentPredictionData] = useState(null);
+  const [agentLoadError, setAgentLoadError] = useState("");
   const [selectedModelKey, setSelectedModelKey] = useState("logistic_regression");
 
   // Estado del simulador en vivo (Panel 2)
@@ -333,6 +433,24 @@ function App() {
     if (darkMode) rootEl.classList.add("dark");
     else rootEl.classList.remove("dark");
   }, [darkMode]);
+
+  // Carga independiente del Bloque 1. Si todavía no se fusionaron sus PR,
+  // el resto del dashboard continúa funcionando con normalidad.
+  async function loadAgents() {
+    try {
+      const response = await fetch("/api/agents");
+      if (!response.ok) throw new Error(`API Bloque 1: HTTP ${response.status}`);
+      setAgentsData(await response.json());
+      setAgentLoadError("");
+    } catch (error) {
+      setAgentLoadError("API del Bloque 1 no disponible todavía.");
+      console.warn("Agentes pendientes de integración:", error);
+    }
+  }
+
+  useEffect(() => {
+    loadAgents();
+  }, []);
 
   // Carga inicial de /api/clustering
   useEffect(() => {
@@ -373,7 +491,22 @@ function App() {
       body: JSON.stringify(payload),
     });
     if (res.ok) {
-      setPredictionResult(await res.json());
+      const result = await res.json();
+      setPredictionResult(result);
+      if (result.block1_agent_predictions) {
+        setAgentPredictionData(result.block1_agent_predictions);
+      }
+    }
+    // Endpoint agregado en PR #4; un 404 no debe romper el simulador original.
+    try {
+      const agentsResponse = await fetch("/api/agents/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (agentsResponse.ok) setAgentPredictionData(await agentsResponse.json());
+    } catch (error) {
+      console.warn("Predicción del Bloque 1 no disponible:", error);
     }
   }
 
@@ -406,6 +539,8 @@ function App() {
         const data = await res.json();
         setMetricsData(data);
         setClusteringData(data.unsupervised_clustering);
+        if (data.block1_agents) setAgentsData(data.block1_agents);
+        await loadAgents();
         await runPrediction(txForm, threshold);
       }
     } finally {
@@ -466,7 +601,8 @@ function App() {
           <!-- Segmented View Switcher -->
           <nav className="hidden xl:flex items-center bg-zinc-100 dark:bg-[#0c0c0f] p-1 rounded-lg border border-zinc-200 dark:border-zinc-800 text-xs font-medium">
             ${[
-              { id: "all", label: "Vista Integrada (3 Paneles)" },
+              { id: "all", label: "Vista Integrada" },
+              { id: "agents", label: "Agentes · Bloque 1" },
               { id: "panel1", label: "1. Umbral & Tabla Comparativa" },
               { id: "panel2", label: "2. Simulador Online" },
               { id: "panel3", label: "3. Clustering Anomalías" },
@@ -615,6 +751,17 @@ function App() {
             </div>
           </div>
         </section>
+
+        <!-- =============================================================== -->
+        <!-- BLOQUE 1: COMPARACIÓN DE ARQUITECTURAS DE AGENTES                -->
+        <!-- =============================================================== -->
+        ${(activeTab === "all" || activeTab === "agents") && html`
+          <${BlockOnePanel}
+            agentData=${agentsData || metricsData.block1_agents}
+            predictionData=${agentPredictionData || predictionResult?.block1_agent_predictions}
+            error=${agentLoadError}
+          />
+        `}
 
         <!-- =============================================================== -->
         <!-- PANEL 1: CONTROL DE UMBRAL Y TABLA COMPARATIVA EN VIVO          -->

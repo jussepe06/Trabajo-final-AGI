@@ -27,7 +27,7 @@ app = FastAPI(
     title="FinGuard AI — Fraud & Anomaly Detection API",
     description=(
         "Sistema desacoplado de detección de fraude financiero y anomalías transaccionales "
-        "(Parte 2 / Bloque 2 — Inteligencia Artificial)"
+        "(Bloque 1 — agentes heurísticos y Bloque 2 — Machine Learning)"
     ),
     version="1.0.0",
     lifespan=lifespan,
@@ -70,6 +70,27 @@ def get_metrics(
     y Beneficio Neto (S/) dinámicamente según el parámetro threshold.
     """
     return engine.evaluate_at_threshold(threshold=threshold)
+
+
+@app.get("/api/agents", tags=["Bloque 1 · Agentes"])
+def get_block1_agents() -> dict[str, Any]:
+    """Compara la regla base, el agente basado en modelo y el agente basado en utilidad.
+
+    Las métricas se calculan con las mismas 1,000 transacciones de prueba.
+    Los datos y los costos son simulados; no se usan transacciones bancarias reales.
+    """
+    return engine.get_block1_agents_results()
+
+
+@app.post("/api/agents/predict", tags=["Bloque 1 · Agentes"])
+def predict_with_block1_agents(payload: TransactionInput) -> dict[str, Any]:
+    """Devuelve las tres decisiones heurísticas para una transacción simulada.
+
+    El campo `threshold` pertenece a los modelos del Bloque 2: no afecta
+    las decisiones heurísticas de este endpoint.
+    """
+    tx_dict = payload.model_dump(exclude={"threshold"})
+    return engine.predict_block1_agents(tx_dict)
 
 
 @app.get("/api/clustering")

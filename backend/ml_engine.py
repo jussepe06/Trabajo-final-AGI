@@ -42,6 +42,12 @@ except ImportError:
         generate_transactions_dataset,
     )
 
+# Bloque 1: agentes heurísticos de FinGuard AI, sin sustituir el Bloque 2.
+try:
+    from backend.agents import ModelBasedAgent, UtilityBasedAgent
+except ImportError:
+    from agents import ModelBasedAgent, UtilityBasedAgent
+
 DEFAULT_ARTIFACTS_PATH = Path(__file__).resolve().parent.parent / "data" / "finguard_artifacts.pkl"
 FP_OPERATIONAL_COST_PEN = 25.0
 
@@ -504,6 +510,7 @@ class FraudDetectionEngine:
             "dataset_summary": self.data_quality_report,
             "supervised_models": supervised_comparison,
             "unsupervised_clustering": self.unsupervised_results,
+            "block1_agents": self.get_block1_agents_results(),
             "recommendations": {
                 "best_financial_model": best_financial_model["model_name"],
                 "best_financial_net_benefit_pen": best_financial_model["financial_simulation"][
@@ -511,6 +518,90 @@ class FraudDetectionEngine:
                 ],
                 "best_f1_model": best_f1_model["model_name"],
                 "best_f1_score": best_f1_model["metrics"]["f1_score"],
+            },
+        }
+
+    def get_block1_agents_results(self) -> dict[str, Any]:
+        """Compara la regla original y dos arquitecturas de agentes en el mismo test.
+
+        La base es sintética y no aporta account_id ni cronología: el agente basado
+        en modelo evalúa señales agregadas por fila; su memoria secuencial NO se
+        utiliza al no haber historiales individuales verificables.
+        """
+        from time import perf_counter
+
+        if not self.is_trained:
+            self.train_all()
+        assert self.X_test is not None and self.y_test is not None
+        X_test = self.X_test
+        y_true = self.y_test.to_numpy(dtype=int)
+        amounts = X_test["monto_pen"].to_numpy(dtype=float)
+
+        evaluators = (
+            ("modo_base", "Modo base: regla estática", lambda: self.apply_heuristic_rule(X_test)),
+            ("agente_modelo", "Agente basado en modelo", lambda: ModelBasedAgent().predict(X_test)),
+            ("agente_utilidad", "Agente basado en utilidad", lambda: UtilityBasedAgent().predict(X_test)),
+        )
+        results = []
+        for key, name, predict in evaluators:
+            start = perf_counter()
+            predicted = np.asarray(predict(), dtype=int)
+            prediction_ms = (perf_counter() - start) * 1000.0
+            tn, fp, fn, tp = confusion_matrix(y_true, predicted, labels=[0, 1]).ravel()
+            prevented = float(amounts[(y_true == 1) & (predicted == 1)].sum())
+            missed = float(amounts[(y_true == 1) & (predicted == 0)].sum())
+            net = prevented - missed - int(fp) * FP_OPERATIONAL_COST_PEN
+            results.append({
+                "agent_key": key,
+                "agent_name": name,
+                "metrics": {
+                    "accuracy": round(float(accuracy_score(y_true, predicted)), 4),
+                    "precision": round(float(precision_score(y_true, predicted, zero_division=0)), 4),
+                    "recall": round(float(recall_score(y_true, predicted, zero_division=0)), 4),
+                    "f1_score": round(float(f1_score(y_true, predicted, zero_division=0)), 4),
+                },
+                "confusion_matrix": {
+                    "tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp),
+                },
+                "financial_simulation": {
+                    "perdida_evitada_pen": round(prevented, 2),
+                    "perdida_sufrida_pen": round(missed, 2),
+                    "costo_falsos_bloqueos_pen": round(int(fp) * FP_OPERATIONAL_COST_PEN, 2),
+                    "beneficio_neto_pen": round(net, 2),
+                },
+                "prediction_time_ms": round(prediction_ms, 3),
+            })
+        return {
+            "description": "Bloque 1: comparación académica de estrategias heurísticas",
+            "test_rows": int(len(X_test)),
+            "test_fraud_count": int((y_true == 1).sum()),
+            "data_origin": "Transacciones sintéticas; no son operaciones bancarias reales",
+            "note": "Tiempos medidos por llamada: varían según máquina; las reglas no requieren entrenamiento. No son promedios de múltiples corridas.",
+            "agents": results,
+        }
+
+    def predict_block1_agents(self, transaction: dict[str, float | int]) -> dict[str, Any]:
+        """Expone decisiones heurísticas individuales, separadas de los cinco modelos originales."""
+        tx_df = pd.DataFrame([{col: transaction[col] for col in FEATURE_COLUMNS}])
+        baseline = int(self.apply_heuristic_rule(tx_df)[0])
+        model_agent = ModelBasedAgent()
+        model_state = model_agent.perceive(tx_df.iloc[0])
+        model_decision = int(model_agent.predict(tx_df)[0])
+        utility_agent = UtilityBasedAgent()
+        risk_score = float(utility_agent.estimated_risk(tx_df)[0])
+        utility_decision = int(utility_agent.predict(tx_df)[0])
+        return {
+            "modo_base": {"decision": "BLOQUEAR" if baseline else "APROBAR", "prediction": baseline},
+            "agente_modelo": {
+                "decision": "BLOQUEAR" if model_decision else "APROBAR",
+                "prediction": model_decision,
+                "alert_count": int(model_state.total_alerts),
+            },
+            "agente_utilidad": {
+                "decision": "BLOQUEAR" if utility_decision else "APROBAR",
+                "prediction": utility_decision,
+                "heuristic_risk_score": round(risk_score, 4),
+                "risk_score_is_calibrated_probability": False,
             },
         }
 
@@ -588,6 +679,7 @@ class FraudDetectionEngine:
             "input_transaction": {col: transaction[col] for col in FEATURE_COLUMNS},
             "threshold": round(float(threshold), 2),
             "predictions": predictions,
+            "block1_agent_predictions": self.predict_block1_agents(transaction),
         }
 
     def _save_artifacts(self) -> None:
